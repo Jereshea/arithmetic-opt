@@ -2,6 +2,7 @@
 #define ARITHMETIC_OP_H
 
 #include "mlir/IR/OpDefinition.h"
+#include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Support/TypeID.h"
 #include "mlir/IR/OpImplementation.h"

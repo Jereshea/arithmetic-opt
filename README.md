@@ -1,6 +1,8 @@
 # arithmetic-opt (`arithmeticops` MLIR Dialect)
 
-A custom out-of-tree MLIR dialect (`arithmeticops`) and standalone optimizer driver (`arithmetic-opt`) implementing element-wise and broadcasting arithmetic operations over `i32` scalars and `i32` tensors.
+A custom out-of-tree MLIR dialect (`arithmeticops`) and standalone optimizer driver (`arithmetic-opt`) built to explore MLIR Operation Definition Specification (ODS) TableGen modeling, traits, custom assembly formats, optional operands, and attributes.
+
+> New to MLIR? See **[GUIDE.md](GUIDE.md)** for a step-by-step walkthrough of TableGen (`mlir-tblgen`), C++ dialect/op registration, and CMake setup.
 
 ---
 
@@ -9,10 +11,12 @@ A custom out-of-tree MLIR dialect (`arithmeticops`) and standalone optimizer dri
 ```text
 arithmetic-opt/
 ├── CMakeLists.txt                  # Top-level CMake configuration
+├── GUIDE.md                        # Step-by-step guide for building a custom MLIR dialect
+├── README.md                       # Project overview, operation summary, and usage
 ├── include/
 │   └── arithmeticops/
 │       ├── arithmetic.h            # Dialect declaration
-│       ├── arithmeticop.h          # Operation class declarations
+│       ├── arithmeticop.h          # Operation class declarations & BytecodeOpInterface include
 │       ├── arithmeticops.td        # TableGen dialect & operation definitions
 │       └── CMakeLists.txt          # mlir-tblgen code generation targets
 ├── lib/
@@ -28,19 +32,23 @@ arithmetic-opt/
     ├── add_broadcasting.mlir       # Scalar-to-tensor addition broadcast test
     ├── mul.mlir                    # Constant scalar multiplication test
     ├── mul_generic.mlir            # Generic syntax multiplication round-trip test
-    └── mul_broadcasting.mlir       # Scalar-to-3D-tensor multiplication broadcast test
+    ├── mul_broadcasting.mlir       # Scalar-to-3D-tensor multiplication broadcast test
+    └── weighted_add.mlir           # Optional operand & F32ArrayAttr weighted addition test
 ```
 
 ---
 
-## Supported Operations
+## Supported Operations & Design Rationale
 
-| Operation | Mnemonic | Traits / Behavior | Assembly Format |
-| :--- | :--- | :--- | :--- |
-| **`addop`** | `arithmeticops.add` | `[SameOperandsAndResultType]` — enforces identical `i32` or `tensor<...xi32>` types across operands and result | Generic quoted syntax |
-| **`add_broadcasting_op`** | `arithmeticops.add_broadcasting_op` | Allows mixed `i32` scalar and `tensor<...xi32>` operands for broadcasted addition | Generic quoted syntax |
-| **`mulop`** | `arithmeticops.mul` | `[SameOperandsAndResultType]` — enforces identical `i32` or `tensor<...xi32>` types across operands and result | `%lhs * %rhs : type` |
-| **`mulbroadcasting_op`** | `arithmeticops.mul_broadcasting_op` | Allows mixed `i32` scalar and `tensor<...xi32>` operands for broadcasted multiplication | `%lhs * %rhs : lhs_type, rhs_type -> res_type` |
+Each operation in `arithmeticops` isolates a specific MLIR TableGen / ODS concept:
+
+| Operation | Mnemonic | Traits / Constraints | Assembly Format | Why It Was Implemented |
+| :--- | :--- | :--- | :--- | :--- |
+| **`addop`** | `arithmeticops.add` | `[SameOperandsAndResultType]` over `AnyTypeOf<[I32, I32Tensor]>` | Generic quoted syntax | Demonstrates built-in MLIR traits that automatically enforce identical types across all operands and results without writing custom verifiers. |
+| **`add_broadcasting_op`** | `arithmeticops.add_broadcasting_op` | Unconstrained `AnyTypeOf<[I32, I32Tensor]>` per operand and result | Generic quoted syntax | Implemented to study how relaxing `SameOperandsAndResultType` allows mixed scalar/tensor signatures at the ODS level, separating structural IR parsing from actual broadcasting math (which is deferred to lowering rather than handled in ODS). |
+| **`mulop`** | `arithmeticops.mul` | `[SameOperandsAndResultType]` over `AnyTypeOf<[I32, I32Tensor]>` | `%lhs * %rhs : type` | Demonstrates custom declarative `assemblyFormat` where a single trailing type (`type($output)`) is sufficient because all operand and result types match. |
+| **`mulbroadcasting_op`** | `arithmeticops.mul_broadcasting_op` | Mixed `AnyTypeOf<[I32, I32Tensor]>` operands and result | `%lhs * %rhs : lhs_type, rhs_type -> res_type` | Demonstrates why custom assembly formats require explicit functional type signatures (`type($val1), type($val2) -> type($output)`) once operand and result types are allowed to differ for broadcasting. |
+| **`WeightedAddOp`** | `arithmeticops.weighted_add` | Mandatory `TensorOf<[AnyInteger, AnyFloat]>` `$input`, `Optional<TensorOf<[AnyInteger, AnyFloat]>>` `$bias`, `F32ArrayAttr` `$testAttr`, and `3DTensorOf<[AnyFloat]>` `$output` | `$input (, $bias)? testAttr = $testAttr : type($input) (, type($bias))? -> type($output)` | Combines runtime optional operands (`Optional<...>`), compile-time array attributes (`F32ArrayAttr`), mixed integer/float tensor inputs, and fixed-rank output constraints (`3DTensorOf<[AnyFloat]>`) in a single operation. Cross-rank broadcasting and `int`-to-`float` promotion are intentionally left for lowering rather than ODS. |
 
 ---
 
@@ -75,7 +83,7 @@ ninja arithmetic-opt
 Run `arithmetic-opt` on an individual `.mlir` test file:
 
 ```bash
-./build/bin/arithmetic-opt test/mul_broadcasting.mlir
+./build/bin/arithmetic-opt test/weighted_add.mlir
 ```
 
 Run the entire test suite in `test/`:
@@ -87,13 +95,22 @@ for f in test/*.mlir; do
 done
 ```
 
-### Example IR (`test/mul_broadcasting.mlir`)
+### Example IR (`test/weighted_add.mlir`)
 
 ```mlir
-func.func @test_mul_broadcast_3d() -> tensor<2x2x2xi32> {
-  %c2_i32 = arith.constant 2 : i32
-  %cst = arith.constant dense<[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]> : tensor<2x2x2xi32>
-  %0 = arithmeticops.mul_broadcasting_op %c2_i32 * %cst : i32, tensor<2x2x2xi32> -> tensor<2x2x2xi32>
-  return %0 : tensor<2x2x2xi32>
+module {
+  // Case 1: Mandatory integer tensor + optional float bias tensor + F32ArrayAttr -> 3D float tensor
+  func.func @test_weighted_add_with_bias(%in: tensor<2x3x4xi32>, %bias: tensor<2x3x4xf32>) -> tensor<2x3x4xf32> {
+    %0 = arithmeticops.weighted_add %in, %bias testAttr = [1.5 : f32, 2.0 : f32, 0.5 : f32]
+        : tensor<2x3x4xi32>, tensor<2x3x4xf32> -> tensor<2x3x4xf32>
+    return %0 : tensor<2x3x4xf32>
+  }
+
+  // Case 2: Optional $bias omitted, 2D float tensor input -> 3D float tensor output
+  func.func @test_weighted_add_without_bias(%in: tensor<3x4xf32>) -> tensor<2x3x4xf32> {
+    %1 = arithmeticops.weighted_add %in testAttr = [1.0 : f32, 2.0 : f32, 3.0 : f32]
+        : tensor<3x4xf32> -> tensor<2x3x4xf32>
+    return %1 : tensor<2x3x4xf32>
+  }
 }
 ```
