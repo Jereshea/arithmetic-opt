@@ -11,7 +11,7 @@
 namespace arithmetic {
 #define GEN_PASS_DEF_CONVERTARITHMETICOPSTOARITH
 #include "arithmeticops/Passes.h.inc"
-} 
+} // namespace arithmetic
 
 using namespace mlir;
 
@@ -36,4 +36,4 @@ struct ConvertArithmeticOpsToArithPass
   }
 };
 
-} 
+} // namespace

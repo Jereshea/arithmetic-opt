@@ -5,10 +5,11 @@
 
 namespace arithmetic {
 
-/// Populates patterns to lower `arithmeticops` operations to the `arith` dialect.
+/// Populates patterns to lower `arithmeticops` operations to the `arith`
+/// dialect.
 void populateArithmeticOpsToArithConversionPatterns(
     mlir::RewritePatternSet &patterns);
 
-} 
+} // namespace arithmetic
 
-#endif 
+#endif

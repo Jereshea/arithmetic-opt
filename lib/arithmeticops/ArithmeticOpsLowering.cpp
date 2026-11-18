@@ -1,4 +1,5 @@
-// Reference: https://github.com/llvm/torch-mlir/blob/main/lib/Conversion/TorchToStablehlo/Basic.cpp 
+// Reference:
+// https://github.com/llvm/torch-mlir/blob/main/lib/Conversion/TorchToStablehlo/Basic.cpp
 
 #include "arithmeticops/ArithmeticOpsLowering.h"
 #include "arithmeticops/arithmeticop.h"
@@ -34,7 +35,7 @@ struct MulOpConverter : public OpConversionPattern<arithmetic::mulop> {
   }
 };
 
-} 
+} // namespace
 
 void arithmetic::populateArithmeticOpsToArithConversionPatterns(
     RewritePatternSet &patterns) {
