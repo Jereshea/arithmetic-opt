@@ -8,12 +8,15 @@
 #include "arithmeticops/arithmetic.h"
 #include "arithmeticops/arithmeticop.h"
 
+#include "arithmeticops/Passes.h"
+
 int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
 
   // 1. Register standard MLIR dialects 
   mlir::registerAllDialects(registry);
   mlir::registerAllPasses();
+  arithmetic::registerArithmeticOpsPasses();
 
   // 2. Register your custom dialect 
   registry.insert<arithmetic::arithmeticops>();
