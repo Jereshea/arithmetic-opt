@@ -60,7 +60,7 @@ struct MulOpConverter : public OpConversionPattern<arithmetic::mulop> {
   }
 };
 
-} // namespace
+} 
 
 void arithmetic::populateArithmeticOpsToArithConversionPatterns(
     RewritePatternSet &patterns) {
