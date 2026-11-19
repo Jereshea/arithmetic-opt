@@ -1,6 +1,6 @@
 # arithmetic-opt (`arithmeticops` MLIR Dialect)
 
-A custom out-of-tree MLIR dialect (`arithmeticops`) and standalone optimizer driver (`arithmetic-opt`) built to explore MLIR Operation Definition Specification (ODS) TableGen modeling, traits, custom assembly formats, optional operands, attributes, and Dialect Conversion lowering passes (`--convert-arithmeticops-to-arith`).
+A custom out-of-tree MLIR dialect (`arithmeticops`) and standalone optimizer driver (`arithmetic-opt`) built to explore MLIR Operation Definition Specification (ODS) TableGen modeling, traits, custom assembly formats, optional operands, attributes, Dialect Conversion lowering passes (`--convert-arithmeticops-to-arith`), and `llvm-lit` / `FileCheck` regression testing.
 
 > New to MLIR? See **[GUIDE.md](GUIDE.md)** for a step-by-step walkthrough of TableGen (`mlir-tblgen`), C++ dialect/op registration, lowering passes, and CMake setup.
 
@@ -26,19 +26,23 @@ arithmetic-opt/
 │   └── arithmeticops/
 │       ├── arithmetic.cpp          # Dialect initialization & registration
 │       ├── arithmeticop.cpp        # Generated operation definitions
-│       ├── ArithmeticOpsLowering.cpp # OpConversionPatterns (addop -> arith.addi, mulop -> arith.muli)
+│       ├── ArithmeticOpsLowering.cpp # OpConversionPatterns (addop -> arith.addi/addf, mulop -> arith.muli/mulf)
 │       ├── Passes.cpp              # ConvertArithmeticOpsToArithPass implementation
 │       └── CMakeLists.txt          # MLIRArithmeticOps static library target
-├── tools/
-│   ├── arithmetic-opt.cpp          # Standalone MLIR optimizer driver
-│   └── CMakeLists.txt              # arithmetic-opt executable target
-└── test/
-    ├── add.mlir                    # Scalar element-wise addition test
-    ├── add_broadcasting.mlir       # Scalar-to-tensor addition broadcast test
-    ├── mul.mlir                    # Constant scalar multiplication test
-    ├── mul_generic.mlir            # Generic syntax multiplication round-trip test
-    ├── mul_broadcasting.mlir       # Scalar-to-3D-tensor multiplication broadcast test
-    └── weighted_add.mlir           # Optional operand & F32ArrayAttr weighted addition test
+├── lit_tests/
+│   ├── CMakeLists.txt              # Configures lit.site.cfg.py and check-arithmetic target
+│   ├── lit.cfg.py                  # llvm-lit suite configuration (ShTest & tool substitutions)
+│   ├── lit.site.cfg.py.in          # CMake template for build-time paths
+│   ├── add.mlir                    # FileCheck regression tests for scalar/tensor add lowering
+│   └── mul.mlir                    # FileCheck regression tests for scalar/tensor mul lowering
+├── tests/
+│   ├── add_broadcasting.mlir       # Scalar-to-tensor addition broadcast parse/verify test
+│   ├── mul_generic.mlir            # Generic syntax multiplication round-trip test
+│   ├── mul_broadcasting.mlir       # Scalar-to-3D-tensor multiplication broadcast test
+│   └── weighted_add.mlir           # Optional operand & F32ArrayAttr weighted addition test
+└── tools/
+    ├── arithmetic-opt.cpp          # Standalone MLIR optimizer driver
+    └── CMakeLists.txt              # arithmetic-opt executable target
 ```
 
 ---
@@ -49,9 +53,9 @@ Each operation in `arithmeticops` isolates a specific MLIR TableGen / ODS concep
 
 | Operation | Mnemonic | Traits / Constraints | Assembly Format | Lowering Status | Why It Was Implemented |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`addop`** | `arithmeticops.add` | `[SameOperandsAndResultType]` over `AnyTypeOf<[I32, I32Tensor]>` | Generic quoted syntax | Lowered to `arith.addi` via `--convert-arithmeticops-to-arith` | Demonstrates built-in MLIR traits that automatically enforce identical types across all operands and results without writing custom verifiers. |
+| **`addop`** | `arithmeticops.add` | `[SameOperandsAndResultType]` over `AnyTypeOf<[I32, I32Tensor, F32, F32Tensor]>` | Generic quoted syntax | Lowered to `arith.addi` / `arith.addf` via `--convert-arithmeticops-to-arith` | Demonstrates built-in MLIR traits that automatically enforce identical types across all operands and results without writing custom verifiers. |
 | **`add_broadcasting_op`** | `arithmeticops.add_broadcasting_op` | Unconstrained `AnyTypeOf<[I32, I32Tensor]>` per operand and result | Generic quoted syntax | Parse/verify only | Implemented to study how relaxing `SameOperandsAndResultType` allows mixed scalar/tensor signatures at the ODS level, separating structural IR parsing from actual broadcasting math. |
-| **`mulop`** | `arithmeticops.mul` | `[SameOperandsAndResultType]` over `AnyTypeOf<[I32, I32Tensor]>` | `%lhs * %rhs : type` | Lowered to `arith.muli` via `--convert-arithmeticops-to-arith` | Demonstrates custom declarative `assemblyFormat` where a single trailing type (`type($output)`) is sufficient because all operand and result types match. |
+| **`mulop`** | `arithmeticops.mul` | `[SameOperandsAndResultType]` over `AnyTypeOf<[I32, I32Tensor, F32, F32Tensor]>` | `%lhs * %rhs : type` | Lowered to `arith.muli` / `arith.mulf` via `--convert-arithmeticops-to-arith` | Demonstrates custom declarative `assemblyFormat` where a single trailing type (`type($output)`) is sufficient because all operand and result types match. |
 | **`mulbroadcasting_op`** | `arithmeticops.mul_broadcasting_op` | Mixed `AnyTypeOf<[I32, I32Tensor]>` operands and result | `%lhs * %rhs : lhs_type, rhs_type -> res_type` | Parse/verify only | Demonstrates why custom assembly formats require explicit functional type signatures (`type($val1), type($val2) -> type($output)`) once operand and result types are allowed to differ for broadcasting. |
 | **`WeightedAddOp`** | `arithmeticops.weighted_add` | Mandatory `TensorOf<[AnyInteger, AnyFloat]>` `$input`, `Optional<TensorOf<[AnyInteger, AnyFloat]>>` `$bias`, `F32ArrayAttr` `$testAttr`, and `3DTensorOf<[AnyFloat]>` `$output` | `$input (, $bias)? testAttr = $testAttr : type($input) (, type($bias))? -> type($output)` | Parse/verify only | Combines runtime optional operands (`Optional<...>`), compile-time array attributes (`F32ArrayAttr`), mixed integer/float tensor inputs, and fixed-rank output constraints (`3DTensorOf<[AnyFloat]>`) in a single operation. |
 
@@ -59,9 +63,9 @@ Each operation in `arithmeticops` isolates a specific MLIR TableGen / ODS concep
 
 ## Prerequisites
 
-* **LLVM / MLIR** built and installed (with `MLIRConfig.cmake` and `LLVMConfig.cmake` available)
+* **LLVM / MLIR** built from source or installed (with `MLIRConfig.cmake`, `LLVMConfig.cmake`, `llvm-lit`, and `FileCheck`)
 * **CMake** (>= 3.20)
-* **Ninja** build system and a C++17-compatible compiler (`g++` or `clang++`)
+* **Ninja** or **Make** build system and a C++17-compatible compiler (`g++` or `clang++`)
 
 ---
 
@@ -72,31 +76,64 @@ From the repository root (`/home/mcw/mlir_assignment/arithmetic-opt`):
 ```bash
 mkdir -p build && cd build
 
-cmake -G Ninja .. \
-  -DMLIR_DIR=/usr/local/lib/cmake/mlir \
-  -DLLVM_DIR=/usr/local/lib/cmake/llvm
+cmake .. \
+  -DMLIR_DIR=/home/mcw/mlir/llvm-project/build/lib/cmake/mlir \
+  -DLLVM_DIR=/home/mcw/mlir/llvm-project/build/lib/cmake/llvm
 
-ninja arithmetic-opt
+cmake --build . --target arithmetic-opt
 ```
 
-*(Note: If your LLVM/MLIR installation lives in a custom build directory rather than `/usr/local`, pass `-DMLIR_DIR=/path/to/llvm-project/build/lib/cmake/mlir` and `-DLLVM_DIR=/path/to/llvm-project/build/lib/cmake/llvm`.)*
+*(Note: Ensure `-DMLIR_DIR` and `-DLLVM_DIR` point to the LLVM/MLIR build containing `llvm-lit` and `FileCheck` so `lit.site.cfg.py` resolves `LLVM_TOOLS_BINARY_DIR` automatically.)*
 
 ---
 
-## Running Tests & Lowering Passes
+## Running `lit` Regression Tests (`lit_tests/`)
+
+Automated lowering tests live in `lit_tests/` and use `llvm-lit` + `FileCheck` to verify IR transformations.
+
+### 1. Build and Run the Full `lit` Test Suite via CMake
+
+From inside `build/` (automatically recompiles `arithmetic-opt` if C++ files changed):
+
+```bash
+cmake --build . --target check-arithmetic
+```
+
+### 2. Run `llvm-lit` Directly (Fast Iteration on `.mlir` Tests)
+
+Once `build/lit_tests/lit.site.cfg.py` has been generated by CMake, you can invoke `llvm-lit` directly from `build/` without triggering a CMake rebuild:
+
+```bash
+# Run all tests in lit_tests/ with verbose output
+/home/mcw/mlir/llvm-project/build/bin/llvm-lit -v lit_tests/
+
+# Run a single test file
+/home/mcw/mlir/llvm-project/build/bin/llvm-lit -v lit_tests/add.mlir
+```
+
+### 3. Run an Individual `FileCheck` Pipeline Manually
+
+```bash
+./bin/arithmetic-opt ../lit_tests/add.mlir --convert-arithmeticops-to-arith \
+  | /home/mcw/mlir/llvm-project/build/bin/FileCheck ../lit_tests/add.mlir
+```
+
+---
+
+## Running Standalone Parse/Verify & Lowering Passes (`tests/`)
 
 ### 1. Parse and Verify Custom Dialect IR
 
-Run `arithmetic-opt` on an individual `.mlir` test file:
+Run `arithmetic-opt` on an individual `.mlir` file in `tests/`:
 
 ```bash
-./build/bin/arithmetic-opt test/weighted_add.mlir
+./build/bin/arithmetic-opt tests/weighted_add.mlir
 ```
 
-Run the entire parse/verify test suite in `test/`:
+Run the entire parse/verify test suite in `tests/`:
 
 ```bash
-for f in test/*.mlir; do
+for f in tests/*.mlir; do
   echo "=== Testing $f ==="
   ./build/bin/arithmetic-opt "$f"
 done
@@ -104,11 +141,11 @@ done
 
 ### 2. Lower `arithmeticops` to Standard `arith` Dialect
 
-Convert `arithmeticops.add` and `arithmeticops.mul` into `arith.addi` and `arith.muli`:
+Convert `arithmeticops.add` and `arithmeticops.mul` into `arith.addi` / `arith.addf` and `arith.muli` / `arith.mulf`:
 
 ```bash
-./build/bin/arithmetic-opt test/add.mlir --convert-arithmeticops-to-arith
-./build/bin/arithmetic-opt test/mul.mlir --convert-arithmeticops-to-arith
+./build/bin/arithmetic-opt lit_tests/add.mlir --convert-arithmeticops-to-arith
+./build/bin/arithmetic-opt lit_tests/mul.mlir --convert-arithmeticops-to-arith
 ```
 
 ### 3. Chain Built-In MLIR Passes to Lower All the Way to LLVM Dialect
@@ -116,14 +153,14 @@ Convert `arithmeticops.add` and `arithmeticops.mul` into `arith.addi` and `arith
 Because `arithmetic-opt` registers MLIR's standard passes, you can chain the output directly into upstream LLVM lowering passes on the CLI:
 
 ```bash
-./build/bin/arithmetic-opt test/mul.mlir \
+./build/bin/arithmetic-opt lit_tests/mul.mlir \
   --convert-arithmeticops-to-arith \
   --convert-arith-to-llvm \
   --convert-func-to-llvm \
   --reconcile-unrealized-casts
 ```
 
-### Example IR (`test/weighted_add.mlir`)
+### Example IR (`tests/weighted_add.mlir`)
 
 ```mlir
 module {
