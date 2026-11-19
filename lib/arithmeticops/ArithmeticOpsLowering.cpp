@@ -5,6 +5,7 @@
 #include "arithmeticops/arithmeticop.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 using namespace mlir;
@@ -17,9 +18,21 @@ struct AddOpConverter : public OpConversionPattern<arithmetic::addop> {
   LogicalResult
   matchAndRewrite(arithmetic::addop op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    rewriter.replaceOpWithNewOp<arith::AddIOp>(op, adaptor.getVal1(),
-                                               adaptor.getVal2());
-    return success();
+    Type element_type = getElementTypeOrSelf(op.getType());
+
+    if (isa<IntegerType>(element_type)) {
+      rewriter.replaceOpWithNewOp<arith::AddIOp>(op, adaptor.getVal1(),
+                                                 adaptor.getVal2());
+      return success();
+    }
+
+    if (isa<FloatType>(element_type)) {
+      rewriter.replaceOpWithNewOp<arith::AddFOp>(op, adaptor.getVal1(),
+                                                 adaptor.getVal2());
+      return success();
+    }
+
+    return rewriter.notifyMatchFailure(op, "unsupported element type");
   }
 };
 
@@ -29,9 +42,21 @@ struct MulOpConverter : public OpConversionPattern<arithmetic::mulop> {
   LogicalResult
   matchAndRewrite(arithmetic::mulop op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    rewriter.replaceOpWithNewOp<arith::MulIOp>(op, adaptor.getVal1(),
-                                               adaptor.getVal2());
-    return success();
+    Type element_type = getElementTypeOrSelf(op.getType());
+
+    if (isa<IntegerType>(element_type)) {
+      rewriter.replaceOpWithNewOp<arith::MulIOp>(op, adaptor.getVal1(),
+                                                 adaptor.getVal2());
+      return success();
+    }
+
+    if (isa<FloatType>(element_type)) {
+      rewriter.replaceOpWithNewOp<arith::MulFOp>(op, adaptor.getVal1(),
+                                                 adaptor.getVal2());
+      return success();
+    }
+
+    return rewriter.notifyMatchFailure(op, "unsupported element type");
   }
 };
 

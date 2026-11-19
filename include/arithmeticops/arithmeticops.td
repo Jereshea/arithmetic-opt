@@ -11,10 +11,10 @@ def arithmeticops: Dialect{
 
 def addop : Op<arithmeticops,"add",[SameOperandsAndResultType]>{
   let summary = "Performs Addition";
-  let description = "Takes 2 integers and performs addition";
-  let arguments = (ins AnyTypeOf<[I32, I32Tensor]>:$val1,
-                       AnyTypeOf<[I32, I32Tensor]>:$val2);
-  let results = (outs AnyTypeOf<[I32, I32Tensor]>:$output);
+  let description = "Takes 2 integers/float and performs addition";
+  let arguments = (ins AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$val1,
+                       AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$val2);
+  let results = (outs AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$output);
 }
 
 def add_broadcasting_op : Op<arithmeticops,"add_broadcasting_op">{
@@ -27,10 +27,10 @@ def add_broadcasting_op : Op<arithmeticops,"add_broadcasting_op">{
 
 def mulop : Op<arithmeticops,"mul",[SameOperandsAndResultType]>{
   let summary = "Performs Multiplication";
-  let description = "Takes 2 integers and performs Multiplication";
-  let arguments = (ins AnyTypeOf<[I32, I32Tensor]>:$val1,
-                       AnyTypeOf<[I32, I32Tensor]>:$val2);
-  let results = (outs AnyTypeOf<[I32, I32Tensor]>:$output);
+  let description = "Takes 2 integers/float and performs Multiplication";
+  let arguments = (ins AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$val1,
+                       AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$val2);
+  let results = (outs AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$output);
   let assemblyFormat = "$val1 `*` $val2 attr-dict `:` type($output)";
 }
 

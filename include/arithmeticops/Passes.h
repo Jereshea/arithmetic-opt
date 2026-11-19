@@ -12,4 +12,4 @@ namespace arithmetic {
 #include "arithmeticops/Passes.h.inc"
 } // namespace arithmetic
 
-#endif // ARITHMETICOPS_PASSES_H
+#endif
