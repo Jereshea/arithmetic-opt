@@ -1,8 +1,8 @@
 # arithmetic-opt (`arithmeticops` MLIR Dialect)
 
-A custom out-of-tree MLIR dialect (`arithmeticops`) and standalone optimizer driver (`arithmetic-opt`) built to explore MLIR Operation Definition Specification (ODS) TableGen modeling, traits, custom assembly formats, optional operands, attributes, Dialect Conversion lowering passes (`--convert-arithmeticops-to-arith`), and `llvm-lit` / `FileCheck` regression testing.
+A custom out-of-tree MLIR dialect (`arithmeticops`) and standalone optimizer driver (`arithmetic-opt`) built to explore MLIR Operation Definition Specification (ODS) TableGen modeling, canonicalization rewrite patterns (`--canonicalize`), Dialect Conversion lowering passes (`--convert-arithmeticops-to-arith`), and `llvm-lit` / `FileCheck` regression testing.
 
-> New to MLIR? See **[GUIDE.md](GUIDE.md)** for a step-by-step walkthrough of TableGen (`mlir-tblgen`), C++ dialect/op registration, lowering passes, and CMake setup.
+> New to MLIR? See **[GUIDE.md](GUIDE.md)** for a step-by-step walkthrough of TableGen (`mlir-tblgen`), C++ dialect/op registration, canonicalization, lowering passes, and CMake setup.
 
 ---
 
@@ -11,13 +11,18 @@ A custom out-of-tree MLIR dialect (`arithmeticops`) and standalone optimizer dri
 ```text
 arithmetic-opt/
 ├── CMakeLists.txt                  # Top-level CMake configuration
-├── GUIDE.md                        # Step-by-step guide for building and lowering a custom MLIR dialect
+├── GUIDE.md                        # Step-by-step guide for building, canonicalizing, and lowering a custom MLIR dialect
 ├── README.md                       # Project overview, operation summary, and usage
+├── archive/                        # Archived early TableGen prototypes & parse-only tests (excluded from active build)
+│   ├── arithmeticops_full.td       # Original ODS with broadcasting & WeightedAddOp prototypes
+│   ├── add_broadcasting.mlir       # Scalar-to-tensor addition broadcast parse/verify test
+│   ├── mul_broadcasting.mlir       # Scalar-to-3D-tensor multiplication broadcast test
+│   └── weighted_add.mlir           # Optional operand & F32ArrayAttr weighted addition test
 ├── include/
 │   └── arithmeticops/
 │       ├── arithmetic.h            # Dialect declaration
 │       ├── arithmeticop.h          # Operation class declarations & BytecodeOpInterface include
-│       ├── arithmeticops.td        # TableGen dialect & operation definitions
+│       ├── arithmeticops.td        # Active TableGen dialect & operation definitions (addop & mulop with canonicalizers)
 │       ├── ArithmeticOpsLowering.h # Conversion pattern population declaration
 │       ├── Passes.h                # Pass declarations & registration hooks
 │       ├── Passes.td               # TableGen pass definition (--convert-arithmeticops-to-arith)
@@ -25,7 +30,7 @@ arithmetic-opt/
 ├── lib/
 │   └── arithmeticops/
 │       ├── arithmetic.cpp          # Dialect initialization & registration
-│       ├── arithmeticop.cpp        # Generated operation definitions
+│       ├── arithmeticop.cpp        # Operation definitions & canonicalization patterns (AddZero, AddSelf, MulZero, MulOne)
 │       ├── ArithmeticOpsLowering.cpp # OpConversionPatterns (addop -> arith.addi/addf, mulop -> arith.muli/mulf)
 │       ├── Passes.cpp              # ConvertArithmeticOpsToArithPass implementation
 │       └── CMakeLists.txt          # MLIRArithmeticOps static library target
@@ -34,12 +39,9 @@ arithmetic-opt/
 │   ├── lit.cfg.py                  # llvm-lit suite configuration (ShTest & tool substitutions)
 │   ├── lit.site.cfg.py.in          # CMake template for build-time paths
 │   ├── add.mlir                    # FileCheck regression tests for scalar/tensor add lowering
-│   └── mul.mlir                    # FileCheck regression tests for scalar/tensor mul lowering
-├── tests/
-│   ├── add_broadcasting.mlir       # Scalar-to-tensor addition broadcast parse/verify test
-│   ├── mul_generic.mlir            # Generic syntax multiplication round-trip test
-│   ├── mul_broadcasting.mlir       # Scalar-to-3D-tensor multiplication broadcast test
-│   └── weighted_add.mlir           # Optional operand & F32ArrayAttr weighted addition test
+│   ├── mul.mlir                    # FileCheck regression tests for scalar/tensor mul lowering
+│   ├── canonicalize_add.mlir       # FileCheck tests for AddZero (x + 0 -> x) and AddSelf (x + x -> x * 2)
+│   └── canonicalize_mul.mlir       # FileCheck tests for MulOne (x * 1 -> x) and MulZero (x * 0 -> 0)
 └── tools/
     ├── arithmetic-opt.cpp          # Standalone MLIR optimizer driver
     └── CMakeLists.txt              # arithmetic-opt executable target
@@ -47,17 +49,16 @@ arithmetic-opt/
 
 ---
 
-## Supported Operations & Design Rationale
+## Active Operations & Canonicalization Patterns
 
-Each operation in `arithmeticops` isolates a specific MLIR TableGen / ODS concept:
+The active build focuses on **`addop`** and **`mulop`** over scalar and tensor `i32` and `f32` types (`AnyTypeOf<[I32, I32Tensor, F32, F32Tensor]>`), with `hasCanonicalizer = 1` enabled in `include/arithmeticops/arithmeticops.td`:
 
-| Operation | Mnemonic | Traits / Constraints | Assembly Format | Lowering Status | Why It Was Implemented |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`addop`** | `arithmeticops.add` | `[SameOperandsAndResultType]` over `AnyTypeOf<[I32, I32Tensor, F32, F32Tensor]>` | Generic quoted syntax | Lowered to `arith.addi` / `arith.addf` via `--convert-arithmeticops-to-arith` | Demonstrates built-in MLIR traits that automatically enforce identical types across all operands and results without writing custom verifiers. |
-| **`add_broadcasting_op`** | `arithmeticops.add_broadcasting_op` | Unconstrained `AnyTypeOf<[I32, I32Tensor]>` per operand and result | Generic quoted syntax | Parse/verify only | Implemented to study how relaxing `SameOperandsAndResultType` allows mixed scalar/tensor signatures at the ODS level, separating structural IR parsing from actual broadcasting math. |
-| **`mulop`** | `arithmeticops.mul` | `[SameOperandsAndResultType]` over `AnyTypeOf<[I32, I32Tensor, F32, F32Tensor]>` | `%lhs * %rhs : type` | Lowered to `arith.muli` / `arith.mulf` via `--convert-arithmeticops-to-arith` | Demonstrates custom declarative `assemblyFormat` where a single trailing type (`type($output)`) is sufficient because all operand and result types match. |
-| **`mulbroadcasting_op`** | `arithmeticops.mul_broadcasting_op` | Mixed `AnyTypeOf<[I32, I32Tensor]>` operands and result | `%lhs * %rhs : lhs_type, rhs_type -> res_type` | Parse/verify only | Demonstrates why custom assembly formats require explicit functional type signatures (`type($val1), type($val2) -> type($output)`) once operand and result types are allowed to differ for broadcasting. |
-| **`WeightedAddOp`** | `arithmeticops.weighted_add` | Mandatory `TensorOf<[AnyInteger, AnyFloat]>` `$input`, `Optional<TensorOf<[AnyInteger, AnyFloat]>>` `$bias`, `F32ArrayAttr` `$testAttr`, and `3DTensorOf<[AnyFloat]>` `$output` | `$input (, $bias)? testAttr = $testAttr : type($input) (, type($bias))? -> type($output)` | Parse/verify only | Combines runtime optional operands (`Optional<...>`), compile-time array attributes (`F32ArrayAttr`), mixed integer/float tensor inputs, and fixed-rank output constraints (`3DTensorOf<[AnyFloat]>`) in a single operation. |
+| Operation | Mnemonic | Traits | Canonicalization Patterns (`--canonicalize`) | Lowering (`--convert-arithmeticops-to-arith`) |
+| :--- | :--- | :--- | :--- | :--- |
+| **`addop`** | `arithmeticops.add` | `[SameOperandsAndResultType]` | • **`AddZero`**: `x + 0 -> x`, `0 + x -> x`<br>• **`AddSelf`**: `x + x -> arithmeticops.mul(x, 2)` | Lowered to `arith.addi` (integers) or `arith.addf` (floats) |
+| **`mulop`** | `arithmeticops.mul` | `[SameOperandsAndResultType]` | • **`MulOne`**: `x * 1 -> x`, `1 * x -> x`<br>• **`MulZero`**: `x * 0 -> 0`, `0 * x -> 0` | Lowered to `arith.muli` (integers) or `arith.mulf` (floats) |
+
+> **Archived Prototypes (`archive/`):** Earlier experimental ODS operations (`add_broadcasting_op`, `mul_broadcasting_op`, and `WeightedAddOp`) and their parse-only `.mlir` files are preserved in `archive/` outside the active CMake build tree.
 
 ---
 
@@ -89,7 +90,7 @@ cmake --build . --target arithmetic-opt
 
 ## Running `lit` Regression Tests (`lit_tests/`)
 
-Automated lowering tests live in `lit_tests/` and use `llvm-lit` + `FileCheck` to verify IR transformations.
+Automated canonicalization and lowering tests live in `lit_tests/` and use `llvm-lit` + `FileCheck` to verify IR transformations.
 
 ### 1. Build and Run the Full `lit` Test Suite via CMake
 
@@ -104,48 +105,44 @@ cmake --build . --target check-arithmetic
 Once `build/lit_tests/lit.site.cfg.py` has been generated by CMake, you can invoke `llvm-lit` directly from `build/` without triggering a CMake rebuild:
 
 ```bash
-# Run all tests in lit_tests/ with verbose output
+# Run all tests in lit_tests/ (lowering + canonicalization) with verbose output
 /home/mcw/mlir/llvm-project/build/bin/llvm-lit -v lit_tests/
 
-# Run a single test file
+# Run individual canonicalization or lowering test files
+/home/mcw/mlir/llvm-project/build/bin/llvm-lit -v lit_tests/canonicalize_add.mlir
+/home/mcw/mlir/llvm-project/build/bin/llvm-lit -v lit_tests/canonicalize_mul.mlir
 /home/mcw/mlir/llvm-project/build/bin/llvm-lit -v lit_tests/add.mlir
+/home/mcw/mlir/llvm-project/build/bin/llvm-lit -v lit_tests/mul.mlir
 ```
 
 ### 3. Run an Individual `FileCheck` Pipeline Manually
 
 ```bash
-./bin/arithmetic-opt ../lit_tests/add.mlir --convert-arithmeticops-to-arith \
-  | /home/mcw/mlir/llvm-project/build/bin/FileCheck ../lit_tests/add.mlir
+./bin/arithmetic-opt ../lit_tests/canonicalize_add.mlir --canonicalize \
+  | /home/mcw/mlir/llvm-project/build/bin/FileCheck ../lit_tests/canonicalize_add.mlir
 ```
 
 ---
 
-## Running Standalone Parse/Verify & Lowering Passes (`tests/`)
+## Running Pass Pipelines on the CLI
 
-### 1. Parse and Verify Custom Dialect IR
+### 1. Run Canonicalization (`--canonicalize`)
 
-Run `arithmetic-opt` on an individual `.mlir` file in `tests/`:
+Simplify algebraic identities (`x + 0`, `x + x -> x * 2`, `x * 1`, `x * 0`) while remaining inside `arithmeticops`:
 
 ```bash
-./build/bin/arithmetic-opt tests/weighted_add.mlir
+./build/bin/arithmetic-opt lit_tests/canonicalize_add.mlir --canonicalize
+./build/bin/arithmetic-opt lit_tests/canonicalize_mul.mlir --canonicalize
 ```
 
-Run the entire parse/verify test suite in `tests/`:
+### 2. Canonicalize and Lower `arithmeticops` to Standard `arith` Dialect
+
+Run `--canonicalize` first to eliminate redundant operations, then convert remaining `arithmeticops.add` and `arithmeticops.mul` operations into `arith.addi` / `arith.addf` and `arith.muli` / `arith.mulf`:
 
 ```bash
-for f in tests/*.mlir; do
-  echo "=== Testing $f ==="
-  ./build/bin/arithmetic-opt "$f"
-done
-```
-
-### 2. Lower `arithmeticops` to Standard `arith` Dialect
-
-Convert `arithmeticops.add` and `arithmeticops.mul` into `arith.addi` / `arith.addf` and `arith.muli` / `arith.mulf`:
-
-```bash
-./build/bin/arithmetic-opt lit_tests/add.mlir --convert-arithmeticops-to-arith
-./build/bin/arithmetic-opt lit_tests/mul.mlir --convert-arithmeticops-to-arith
+./build/bin/arithmetic-opt lit_tests/canonicalize_add.mlir \
+  --canonicalize \
+  --convert-arithmeticops-to-arith
 ```
 
 ### 3. Chain Built-In MLIR Passes to Lower All the Way to LLVM Dialect
@@ -154,28 +151,9 @@ Because `arithmetic-opt` registers MLIR's standard passes, you can chain the out
 
 ```bash
 ./build/bin/arithmetic-opt lit_tests/mul.mlir \
+  --canonicalize \
   --convert-arithmeticops-to-arith \
   --convert-arith-to-llvm \
   --convert-func-to-llvm \
   --reconcile-unrealized-casts
-```
-
-### Example IR (`tests/weighted_add.mlir`)
-
-```mlir
-module {
-  // Case 1: Mandatory integer tensor + optional float bias tensor + F32ArrayAttr -> 3D float tensor
-  func.func @test_weighted_add_with_bias(%in: tensor<2x3x4xi32>, %bias: tensor<2x3x4xf32>) -> tensor<2x3x4xf32> {
-    %0 = arithmeticops.weighted_add %in, %bias testAttr = [1.5 : f32, 2.0 : f32, 0.5 : f32]
-        : tensor<2x3x4xi32>, tensor<2x3x4xf32> -> tensor<2x3x4xf32>
-    return %0 : tensor<2x3x4xf32>
-  }
-
-  // Case 2: Optional $bias omitted, 2D float tensor input -> 3D float tensor output
-  func.func @test_weighted_add_without_bias(%in: tensor<3x4xf32>) -> tensor<2x3x4xf32> {
-    %1 = arithmeticops.weighted_add %in testAttr = [1.0 : f32, 2.0 : f32, 3.0 : f32]
-        : tensor<3x4xf32> -> tensor<2x3x4xf32>
-    return %1 : tensor<2x3x4xf32>
-  }
-}
 ```
