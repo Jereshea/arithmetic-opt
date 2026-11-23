@@ -5,6 +5,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -25,8 +26,9 @@ struct ConvertArithmeticOpsToArithPass
     ModuleOp module = getOperation();
 
     ConversionTarget target(*context);
-    target.addLegalDialect<arith::ArithDialect>();
-    target.addIllegalOp<arithmetic::addop, arithmetic::mulop>();
+    target.addLegalDialect<arith::ArithDialect, tensor::TensorDialect>();
+    target.addIllegalOp<arithmetic::addop, arithmetic::mulop,
+                        arithmetic::addcmulop>();
 
     RewritePatternSet patterns(context);
     arithmetic::populateArithmeticOpsToArithConversionPatterns(patterns);

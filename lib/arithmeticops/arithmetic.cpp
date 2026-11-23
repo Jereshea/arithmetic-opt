@@ -1,5 +1,7 @@
 #include "arithmeticops/arithmetic.h"
 #include "arithmeticops/arithmeticop.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 using namespace mlir;
 using namespace arithmetic;
