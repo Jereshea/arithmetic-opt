@@ -16,6 +16,7 @@ def addop : Op<arithmeticops,"add",[SameOperandsAndResultType]>{
                        AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$val2);
   let results = (outs AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$output);
   let hasCanonicalizer = 1;
+  let hasFolder = 1;
 }
 
 def mulop : Op<arithmeticops,"mul",[SameOperandsAndResultType]>{
@@ -25,5 +26,5 @@ def mulop : Op<arithmeticops,"mul",[SameOperandsAndResultType]>{
                        AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$val2);
   let results = (outs AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$output);
   let assemblyFormat = "$val1 `*` $val2 attr-dict `:` type($output)";
-  let hasCanonicalizer = 1;
+  let hasFolder = 1;
 }
