@@ -2,6 +2,7 @@ add_mlir_dialect_library(MLIRArithmeticOps
         arithmetic.cpp
         arithmeticop.cpp
         ArithmeticOpsLowering.cpp
+        ArithmeticOpsFusion.cpp
         Passes.cpp
 
         ADDITIONAL_HEADER_DIRS

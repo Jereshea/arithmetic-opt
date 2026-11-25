@@ -105,6 +105,36 @@ struct AddcMulOpConverter : public OpConversionPattern<arithmetic::addcmulop> {
   }
 };
 
+struct FusedAddMulOpConverter
+    : public OpConversionPattern<arithmetic::fusedAddMulop> {
+  using OpConversionPattern<arithmetic::fusedAddMulop>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(arithmetic::fusedAddMulop op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Type element_type = getElementTypeOrSelf(op.getType());
+
+    if (isa<IntegerType>(element_type)) {
+      Value sum = arith::AddIOp::create(rewriter, loc, adaptor.getInput_1(),
+                                        adaptor.getInput_2());
+      rewriter.replaceOpWithNewOp<arith::MulIOp>(op, sum,
+                                                 adaptor.getInput_3());
+      return success();
+    }
+
+    if (isa<FloatType>(element_type)) {
+      Value sum = arith::AddFOp::create(rewriter, loc, adaptor.getInput_1(),
+                                        adaptor.getInput_2());
+      rewriter.replaceOpWithNewOp<arith::MulFOp>(op, sum,
+                                                 adaptor.getInput_3());
+      return success();
+    }
+
+    return rewriter.notifyMatchFailure(op, "unsupported element type");
+  }
+};
+
 } // namespace
 
 void arithmetic::populateArithmeticOpsToArithConversionPatterns(
@@ -112,4 +142,5 @@ void arithmetic::populateArithmeticOpsToArithConversionPatterns(
   patterns.add<AddOpConverter>(patterns.getContext());
   patterns.add<MulOpConverter>(patterns.getContext());
   patterns.add<AddcMulOpConverter>(patterns.getContext());
+  patterns.add<FusedAddMulOpConverter>(patterns.getContext());
 }

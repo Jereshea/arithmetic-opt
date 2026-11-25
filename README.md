@@ -1,8 +1,14 @@
-# arithmetic-opt (`arithmeticops` MLIR Dialect)
+# arithmetic-opt (`arithmeticops` MLIR Sample Dialect & Example Repo)
 
-A custom out-of-tree MLIR dialect (`arithmeticops`) and standalone optimizer driver (`arithmetic-opt`) built to explore MLIR Operation Definition Specification (ODS) TableGen modeling, in-place constant/identity folding (`hasFolder = 1`), structural canonicalization rewrite patterns (`hasCanonicalizer = 1` / `--canonicalize`), Dialect Conversion lowering passes (`--convert-arithmeticops-to-arith`), and `llvm-lit` / `FileCheck` regression testing.
+AAn end-to-end **MLIR example repository** and custom out-of-tree **MLIR sample dialect** (`arithmeticops`) with a standalone optimizer driver (`arithmetic-opt`). Built from scratch to explore modern MLIR compiler development, it demonstrates:
 
-> New to MLIR? See **[GUIDE.md](GUIDE.md)** for a step-by-step walkthrough of TableGen (`mlir-tblgen`), C++ dialect/op registration, folding, canonicalization, lowering passes, and CMake setup.
+- **MLIR Operation Definition Specification (ODS):** Custom TableGen dialect and operation definitions (`add`, `mul`, `addcmul`, `fusedaddmul`).
+- **Operator Fusion Pass (`--fuse-arithmetic-ops`):** Pattern-based graph fusion combining `arithmeticops.mul` + `arithmeticops.add` into a single `arithmeticops.fusedaddmul` operation.
+- **Folding & Canonicalization (`--canonicalize`):** Hybrid in-place constant/identity folding (`hasFolder = 1`) and structural `OpRewritePattern` canonicalization (`hasCanonicalizer = 1`).
+- **Progressive Dialect Lowering (`--convert-arithmeticops-to-arith`):** Dialect conversion to standard `arith` and `tensor` dialects, plus end-to-end lowering to LLVM IR (`mlir-runner`).
+- **Regression Testing:** Automated `llvm-lit` + `FileCheck` test suite.
+
+> New to MLIR? See **[GUIDE.md](GUIDE.md)** for a step-by-step walkthrough of TableGen (`mlir-tblgen`), C++ dialect/op registration, folding, canonicalization, operator fusion, lowering passes, and CMake setup.
 
 ---
 
@@ -11,7 +17,7 @@ A custom out-of-tree MLIR dialect (`arithmeticops`) and standalone optimizer dri
 ```text
 arithmetic-opt/
 ├── CMakeLists.txt                  # Top-level CMake configuration
-├── GUIDE.md                        # Step-by-step guide for building, canonicalizing, and lowering a custom MLIR dialect
+├── GUIDE.md                        # Step-by-step guide for building, fusing, canonicalizing, and lowering a custom MLIR dialect
 ├── README.md                       # Project overview, operation summary, and usage
 ├── archive/                        # Archived early TableGen prototypes & parse-only tests (excluded from active build)
 │   ├── arithmeticops_full.td       # Original ODS with broadcasting & WeightedAddOp prototypes
@@ -22,17 +28,19 @@ arithmetic-opt/
 │   └── arithmeticops/
 │       ├── arithmetic.h            # Dialect declaration
 │       ├── arithmeticop.h          # Operation class declarations & BytecodeOpInterface include
-│       ├── arithmeticops.td        # Active TableGen dialect & operation definitions (addop, mulop, addcmulop)
+│       ├── arithmeticops.td        # Active TableGen dialect & operation definitions (addop, mulop, addcmulop, fusedaddmulop)
+│       ├── ArithmeticOpsFusion.h   # Operator fusion pattern population declaration
 │       ├── ArithmeticOpsLowering.h # Conversion pattern population declaration
 │       ├── Passes.h                # Pass declarations & registration hooks
-│       ├── Passes.td               # TableGen pass definition (--convert-arithmeticops-to-arith)
+│       ├── Passes.td               # TableGen pass definitions (--fuse-arithmetic-ops, --convert-arithmeticops-to-arith)
 │       └── CMakeLists.txt          # mlir-tblgen code generation targets
 ├── lib/
 │   └── arithmeticops/
 │       ├── arithmetic.cpp          # Dialect initialization & registration (with Arith/Tensor dependentDialects)
 │       ├── arithmeticop.cpp        # Operation definitions, fold() methods, and OpRewritePatterns
-│       ├── ArithmeticOpsLowering.cpp # OpConversionPatterns (addop, mulop, addcmulop -> arith & tensor dialects)
-│       ├── Passes.cpp              # ConvertArithmeticOpsToArithPass implementation
+│       ├── ArithmeticOpsFusion.cpp # OpRewritePatterns fusing mul + add -> fusedaddmul
+│       ├── ArithmeticOpsLowering.cpp # OpConversionPatterns (add, mul, addcmul, fusedaddmul -> arith & tensor dialects)
+│       ├── Passes.cpp              # FuseArithmeticOpsPass & ConvertArithmeticOpsToArithPass implementations
 │       └── CMakeLists.txt          # MLIRArithmeticOps static library target
 ├── lit_tests/
 │   ├── CMakeLists.txt              # Configures lit.site.cfg.py and check-arithmetic target
@@ -41,6 +49,7 @@ arithmetic-opt/
 │   ├── add.mlir                    # FileCheck regression tests for scalar/tensor add lowering
 │   ├── mul.mlir                    # FileCheck regression tests for scalar/tensor mul lowering
 │   ├── addcmul.mlir                # FileCheck regression tests for tensor addcmul lowering
+│   ├── fuse_addmul.mlir            # FileCheck regression tests for mul + add -> fusedaddmul fusion & lowering
 │   ├── canonicalize_add.mlir       # FileCheck tests for addop folding (x + 0) & AddSelf (x + x -> x * 2)
 │   ├── canonicalize_mul.mlir       # FileCheck tests for mulop folding (x * 1 -> x, x * 0 -> 0)
 │   └── canonicalize_addcmul.mlir   # FileCheck tests for addcmulop folding & structural canonicalization
@@ -51,19 +60,20 @@ arithmetic-opt/
 
 ---
 
-## Active Operations, Folding & Canonicalization
+## Active Operations, Fusion, Folding & Canonicalization
 
-The active build defines **`addop`**, **`mulop`**, and **`addcmulop`**, with `dependentDialects = ["mlir::arith::ArithDialect", "mlir::tensor::TensorDialect"]` declared on the dialect so `--canonicalize` and lowering passes can materialize `arith` and `tensor` operations seamlessly.
+The active build defines **`addop`**, **`mulop`**, **`addcmulop`**, and **`fusedaddmulop`**, with `dependentDialects = ["mlir::arith::ArithDialect", "mlir::tensor::TensorDialect"]` declared on the dialect so `--canonicalize` and lowering passes can materialize `arith` and `tensor` operations seamlessly.
 
 Canonicalization uses a **hybrid `fold()` + `OpRewritePattern` architecture**:
 * **`fold()` (`hasFolder = 1`):** Handles in-place identity and zero simplifications that return an existing SSA operand without creating new operations.
 * **`OpRewritePattern` (`hasCanonicalizer = 1`):** Handles structural transformations that replace an operation with newly constructed operations (e.g., `arith.constant`, `tensor.splat`, `arithmeticops.mul`, `arithmeticops.add`).
 
-| Operation | Mnemonic | Traits & Types | `fold()` Rules (In-Place) | `OpRewritePattern` Rules (`--canonicalize`) | Lowering (`--convert-arithmeticops-to-arith`) |
+| Operation | Mnemonic | Traits & Types | `fold()` / Fusion Rules | `OpRewritePattern` Rules (`--canonicalize`) | Lowering (`--convert-arithmeticops-to-arith`) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`addop`** | `arithmeticops.add` | `[Pure, SameOperandsAndResultType]`<br>`I32, F32, I32Tensor, F32Tensor` | • `x + 0 -> x`<br>• `0 + x -> x` | • **`AddSelf`**: `x + x -> arithmeticops.mul(x, 2)` | Lowered to `arith.addi` (integers) or `arith.addf` (floats) |
-| **`mulop`** | `arithmeticops.mul` | `[Pure, SameOperandsAndResultType]`<br>`I32, F32, I32Tensor, F32Tensor` | • `x * 1 -> x`, `1 * x -> x`<br>• `x * 0 -> 0`, `0 * x -> 0` | *(Handled via `fold()`)* | Lowered to `arith.muli` (integers) or `arith.mulf` (floats) |
-| **`addcmulop`** | `arithmeticops.addcmul`<br>`input + value * (tensor1 * tensor2)` | `[Pure, AllShapesMatch, AllElementTypesMatch]`<br>`input, tensor1, tensor2`: `I32Tensor, F32Tensor`<br>`value`: `I32, F32` | • `input + 0 * (tensor1 * tensor2) -> input`<br>• `input + value * (dense<0> * tensor2) -> input`<br>• `input + value * (tensor1 * dense<0>) -> input` | • **`Input_Zero`**: `dense<0> + value * (tensor1 * tensor2) -> splat(value) * (tensor1 * tensor2)`<br>• **`Value_One`**: `input + 1 * (tensor1 * tensor2) -> input + (tensor1 * tensor2)`<br>• **`Tensor1_One`**: `input + value * (dense<1> * tensor2) -> input + (splat(value) * tensor2)`<br>• **`Tensor2_One`**: `input + value * (tensor1 * dense<1>) -> input + (splat(value) * tensor1)` | Lowered to `tensor.splat` + `arith.muli`/`mulf` + `arith.addi`/`addf` |
+| **`addop`** | `arithmeticops.add` | `[Pure, SameOperandsAndResultType]`<br>`I32, F32, I32Tensor, F32Tensor` | • **Fold:** `x + 0 -> x`, `0 + x -> x`<br>• **Fuse (`--fuse-arithmetic-ops`):** `add(mul(a, b), c)` or `add(c, mul(a, b))` -> `fusedaddmul(a, b, c)` | • **`AddSelf`**: `x + x -> arithmeticops.mul(x, 2)` | Lowered to `arith.addi` (integers) or `arith.addf` (floats) |
+| **`mulop`** | `arithmeticops.mul` | `[Pure, SameOperandsAndResultType]`<br>`I32, F32, I32Tensor, F32Tensor` | • **Fold:** `x * 1 -> x`, `1 * x -> x`, `x * 0 -> 0`, `0 * x -> 0`<br>• **Fuse (`--fuse-arithmetic-ops`):** Fused into `fusedaddmul` when feeding `add` | *(Handled via `fold()`)* | Lowered to `arith.muli` (integers) or `arith.mulf` (floats) |
+| **`fusedaddmulop`** | `arithmeticops.fusedaddmul`<br>`(a * b) + c` | `[Pure, SameOperandsAndResultType]`<br>`a, b, c`: `I32, F32, I32Tensor, F32Tensor` | • Produced by `--fuse-arithmetic-ops` from `mul` + `add` chains (when `mul` has a single `add` user) | *(Fused target op)* | Lowered to `arith.muli`/`mulf` + `arith.addi`/`addf` |
+| **`addcmulop`** | `arithmeticops.addcmul`<br>`input + value * (tensor1 * tensor2)` | `[Pure, AllShapesMatch, AllElementTypesMatch]`<br>`input, tensor1, tensor2`: `I32Tensor, F32Tensor`<br>`value`: `I32, F32` | • **Fold:** `input + 0 * (t1 * t2) -> input`<br>• **Fold:** `input + val * (dense<0> * t2) -> input`<br>• **Fold:** `input + val * (t1 * dense<0>) -> input` | • **`Input_Zero`**: `dense<0> + val * (t1 * t2) -> splat(val) * (t1 * t2)`<br>• **`Value_One`**: `input + 1 * (t1 * t2) -> input + (t1 * t2)`<br>• **`Tensor1_One`**: `input + val * (dense<1> * t2) -> input + (splat(val) * t2)`<br>• **`Tensor2_One`**: `input + val * (t1 * dense<1>) -> input + (splat(val) * t1)` | Lowered to `tensor.splat` + `arith.muli`/`mulf` + `arith.addi`/`addf` |
 
 > **Archived Prototypes (`archive/`):** Earlier experimental ODS operations (`add_broadcasting_op`, `mul_broadcasting_op`, and `WeightedAddOp`) and their parse-only `.mlir` files are preserved in `archive/` outside the active CMake build tree.
 
@@ -71,7 +81,7 @@ Canonicalization uses a **hybrid `fold()` + `OpRewritePattern` architecture**:
 
 ## Prerequisites
 
-* **LLVM / MLIR** built from source or installed (with `MLIRConfig.cmake`, `LLVMConfig.cmake`, `llvm-lit`, and `FileCheck`)
+* **LLVM / MLIR** built from source or installed (with `MLIRConfig.cmake`, `LLVMConfig.cmake`, `llvm-lit`, `FileCheck`, and `mlir-runner`)
 * **CMake** (>= 3.20)
 * **Ninja** or **Make** build system and a C++17-compatible compiler (`g++` or `clang++`)
 
@@ -97,7 +107,7 @@ cmake --build . --target arithmetic-opt
 
 ## Running `lit` Regression Tests (`lit_tests/`)
 
-Automated canonicalization and lowering tests live in `lit_tests/` and use `llvm-lit` + `FileCheck` to verify IR transformations across all 6 test files (`add`, `mul`, `addcmul` lowering and canonicalization).
+Automated fusion, canonicalization, and lowering tests live in `lit_tests/` and use `llvm-lit` + `FileCheck` to verify IR transformations across all test files.
 
 ### 1. Build and Run the Full `lit` Test Suite via CMake
 
@@ -112,10 +122,11 @@ cmake --build . --target check-arithmetic
 Once `build/lit_tests/lit.site.cfg.py` has been generated by CMake, you can invoke `llvm-lit` directly from `build/` without triggering a CMake rebuild:
 
 ```bash
-# Run all 6 tests in lit_tests/ (lowering + canonicalization) with verbose output
+# Run all tests in lit_tests/ (fusion + lowering + canonicalization) with verbose output
 /home/mcw/mlir/llvm-project/build/bin/llvm-lit -v lit_tests/
 
-# Run individual canonicalization or lowering test files
+# Run individual fusion, canonicalization, or lowering test files
+/home/mcw/mlir/llvm-project/build/bin/llvm-lit -v lit_tests/fuse_addmul.mlir
 /home/mcw/mlir/llvm-project/build/bin/llvm-lit -v lit_tests/canonicalize_add.mlir
 /home/mcw/mlir/llvm-project/build/bin/llvm-lit -v lit_tests/canonicalize_mul.mlir
 /home/mcw/mlir/llvm-project/build/bin/llvm-lit -v lit_tests/canonicalize_addcmul.mlir
@@ -135,7 +146,15 @@ Once `build/lit_tests/lit.site.cfg.py` has been generated by CMake, you can invo
 
 ## Running Pass Pipelines on the CLI
 
-### 1. Run Canonicalization (`--canonicalize`)
+### 1. Fuse `mul` + `add` Operations (`--fuse-arithmetic-ops`)
+
+Combine eligible `arithmeticops.mul` and `arithmeticops.add` pairs into `arithmeticops.fusedaddmul`:
+
+```bash
+./build/bin/arithmetic-opt lit_tests/fuse_addmul.mlir --fuse-arithmetic-ops
+```
+
+### 2. Run Canonicalization (`--canonicalize`)
 
 Simplify algebraic identities and fold constant zero/one operands across `add`, `mul`, and `addcmul`:
 
@@ -145,25 +164,31 @@ Simplify algebraic identities and fold constant zero/one operands across `add`, 
 ./build/bin/arithmetic-opt lit_tests/canonicalize_addcmul.mlir --canonicalize
 ```
 
-### 2. Canonicalize and Lower `arithmeticops` to Standard `arith` & `tensor` Dialects
+### 3. Fuse, Canonicalize, and Lower `arithmeticops` to Standard `arith` & `tensor` Dialects
 
-Run `--canonicalize` first to eliminate redundant operations, then convert remaining `arithmeticops.add`, `arithmeticops.mul`, and `arithmeticops.addcmul` operations into `arith` and `tensor` dialect ops:
+Run `--fuse-arithmetic-ops` and `--canonicalize` first to simplify and fuse operations, then convert remaining `arithmeticops` operations into `arith` and `tensor` dialect ops:
 
 ```bash
-./build/bin/arithmetic-opt lit_tests/canonicalize_addcmul.mlir \
+./build/bin/arithmetic-opt lit_tests/fuse_addmul.mlir \
+  --fuse-arithmetic-ops \
   --canonicalize \
   --convert-arithmeticops-to-arith
 ```
 
-### 3. Chain Built-In MLIR Passes to Lower Scalar Ops All the Way to LLVM Dialect
+### 4. End-to-End Lowering to LLVM IR & JIT Execution (`mlir-runner`)
 
-Because `arithmetic-opt` registers MLIR's standard passes, you can chain scalar operations directly into upstream LLVM lowering passes on the CLI:
+Chain `arithmetic-opt` with upstream `mlir-opt` and `mlir-runner` to execute fused scalar IR directly on the CPU:
 
 ```bash
-./build/bin/arithmetic-opt lit_tests/mul.mlir \
-  --canonicalize \
+./build/bin/arithmetic-opt lit_tests/fuse_addmul.mlir \
+  --fuse-arithmetic-ops \
   --convert-arithmeticops-to-arith \
-  --convert-arith-to-llvm \
-  --convert-func-to-llvm \
-  --reconcile-unrealized-casts
+  | /home/mcw/mlir/llvm-project/build/bin/mlir-opt \
+      --convert-arith-to-llvm \
+      --convert-func-to-llvm \
+      --reconcile-unrealized-casts \
+  | /home/mcw/mlir/llvm-project/build/bin/mlir-runner \
+      -e main \
+      -entry-point-result=i32 \
+      --shared-libs=/home/mcw/mlir/llvm-project/build/lib/libmlir_runner_utils.so,/home/mcw/mlir/llvm-project/build/lib/libmlir_c_runner_utils.so
 ```

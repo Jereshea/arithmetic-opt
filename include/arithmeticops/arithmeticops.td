@@ -45,3 +45,12 @@ def addcmulop : Op<arithmeticops,"addcmul",[Pure, AllShapesMatch<["input", "tens
   let hasFolder = 1;
   let hasCanonicalizer = 1;
 }
+
+def fusedAddMulop : Op<arithmeticops,"fusedaddmul",[Pure, SameOperandsAndResultType]>{
+  let summary = "Fused add followed by multiply: (a + b) * c";
+  let description = "Computes if a= (b+c); d = a*e in a single fused operation.";
+  let arguments = (ins AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$input_1,
+                       AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$input_2,
+                       AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$input_3);
+  let results = (outs AnyTypeOf<[I32, F32, I32Tensor, F32Tensor]>:$output);
+}

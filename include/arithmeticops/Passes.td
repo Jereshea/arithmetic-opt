@@ -10,4 +10,9 @@ def ConvertArithmeticOpsToArith : Pass<"convert-arithmeticops-to-arith", "mlir::
   let dependentDialects = ["mlir::arith::ArithDialect", "mlir::tensor::TensorDialect"];
 }
 
+def FuseArithmeticOps : Pass<"fuse-arithmetic-ops", "mlir::ModuleOp"> {
+  let summary = "Fuse producer-consumer arithmetic operations";
+  let description = [{Fuses add followed by mul into arithmeticops.fused_add_mul.}];
+}
+
 #endif 
